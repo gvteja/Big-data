@@ -58,7 +58,7 @@ class MyMapReduce:#[TODO]
 
     def partitionFunction(self,k): #[TODO]
         #given a key returns the reduce task to send it
-        node_number = hash(k) % self.num_reduce_tasks
+        node_number = hash(str(k)) % self.num_reduce_tasks
         return node_number
 
 
@@ -176,7 +176,39 @@ class MatrixMultMR(MyMapReduce): #[TODO]
 
     reduce should take one row from m1 and cols for m2 and do a dot product. this is the val of i,j in op matrix
     '''
-    pass
+    def __init__(self, data, h1, w1, h2, w2, num_map_tasks=4, num_reduce_tasks=3):
+        self.data = data  #the "file": list of all key value pairs
+        self.num_map_tasks=num_map_tasks #how many processes to spawn as map tasks
+        self.num_reduce_tasks=num_reduce_tasks # " " " as reduce tasks
+        # M is h1 x w1 and N is h2 x w2
+        self.h1 = h1
+        self.w1 = w1
+        self.h2 = h2
+        self.w2 = w2
+
+    def map(self, k, v):
+        kv_dict = {}
+        label, r, c = k
+        if label.lower() == "m":
+            for i in range(self.h2):
+                kv_dict[(r, i)] = (label, c, v)
+        else:
+            for i in range(self.h1):
+                kv_dict[(i, c)] = (label, r, v)
+
+        return kv_dict.items()
+
+    
+    def reduce(self, k, vs):
+        m_row = np.zeros(self.w1)
+        n_col = np.zeros(self.w1)
+        for (label, pos, v) in vs:
+            if label.lower() == "m":
+                m_row[pos] = v
+            else:
+                n_col[pos] = v
+        res = np.inner(m_row, n_col)
+        return (k, res)    
 
 ##########################################################################
 ##########################################################################
@@ -228,15 +260,15 @@ if __name__ == "__main__": #[DONE: Uncomment peices to test]
     ####################
     ##run MatrixMultiply
     #(uncomment when ready to test)
-#     data1 = matrixToCoordTuples('m', [[1, 2], [3, 4]]) + matrixToCoordTuples('n', [[1, 2], [3, 4]])
-#     data2 = matrixToCoordTuples('m', [[1, 2, 3], [4, 5, 6]]) + matrixToCoordTuples('n', [[1, 2], [3, 4], [5, 6]])
-#     data3 = matrixToCoordTuples('m', np.random.rand(20,5)) + matrixToCoordTuples('n', np.random.rand(5, 40))
-#     mrObject = MatrixMultMR(data1, 2, 2)
-#     mrObject.runSystem() 
-#     mrObject = MatrixMultMR(data2, 2, 2)
-#     mrObject.runSystem() 
-#     mrObject = MatrixMultMR(data3, 6, 6)
-#     mrObject.runSystem() 
+    data1 = matrixToCoordTuples('m', [[1, 2], [3, 4]]) + matrixToCoordTuples('n', [[1, 2], [3, 4]])
+    data2 = matrixToCoordTuples('m', [[1, 2, 3], [4, 5, 6]]) + matrixToCoordTuples('n', [[1, 2], [3, 4], [5, 6]])
+    data3 = matrixToCoordTuples('m', np.random.rand(20,5)) + matrixToCoordTuples('n', np.random.rand(5, 40))
+    mrObject = MatrixMultMR(data1, 2, 2, 2, 2, 2, 2)
+    mrObject.runSystem() 
+    mrObject = MatrixMultMR(data2, 2, 3, 3, 2, 2, 2)
+    mrObject.runSystem() 
+    # mrObject = MatrixMultMR(data3, 6, 6)
+    # mrObject.runSystem() 
 
     ######################
     ## run minhashing:
