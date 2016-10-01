@@ -141,7 +141,7 @@ class MyMapReduce:#[TODO]
 
         #print output from reducer tasks 
         #[DONE]
-        print "map_to_reducer after map tasks complete:"
+        print "map_to_reducer after reduce tasks complete:"
         pprint(sorted(list(from_reducer)))
 
         #return all key-value pairs:
