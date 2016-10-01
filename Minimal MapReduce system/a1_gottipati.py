@@ -221,11 +221,48 @@ def minhash(documents, k=5): #[TODO]
 
     signatures = None#the signature matrix
 
+    shingles = []
+    all_shingles = set()
+    num_docs = len(documents)
+
     #Shingle Each Document into sets, using k size shingles
     #[TODO]
+    for doc in documents:
+        shingles.append(set())
+        for i in range(k+1, len(doc) + 1):
+            shingles[-1].add(doc[i-k:i])
+        all_shingles.update(shingles[-1])
+        # print doc
+        # print shingles[-1]
+        # print len(shingles[-1]), len(all_shingles)
+
+    num_shingles = len(all_shingles)
+    num_hashes = 50
+
+    signatures = np.full((num_hashes, num_docs), np.iinfo(np.int64).max, np.int64)
 
     #Perform efficient Minhash 
     #[TODO]
+    def int_hash(x):
+        x = ((x >> 16) ^ x) * 0x45d9f3b
+        x = ((x >> 16) ^ x) * 0x45d9f3b
+        x = (x >> 16) ^ x
+        return x
+
+    cofs = []
+    for i in range(num_hashes):
+        cofs.append((np.random.randint(2, 1000), np.random.randint(2, 1000)))
+
+    for (i, s) in enumerate(all_shingles):
+        h = []
+        for (m, a) in cofs:
+            h.append((m * int_hash(i) + a) % num_shingles)
+        for j in range(num_docs):
+            if s in shingles[j]:
+                # its a 1 in CM
+                for k in range(num_hashes):
+                    signatures[k][j] = min(h[k], signatures[k][j])
+
 
     #Print signature matrix and return them 
     #[DONE]
@@ -273,8 +310,8 @@ if __name__ == "__main__": #[DONE: Uncomment peices to test]
     ######################
     ## run minhashing:
     # (uncomment when ready to test)
-#     documents = ["The horse raced past the barn fell. The complex houses married and single soldiers and their families",
-#                  "There is nothing either good or bad, but thinking makes it so. I burn, I pine, I perish. Come what come may, time and the hour runs through the roughest day",
-#                  "Be a yardstick of quality. A horse is the projection of peoples' dreams about themselves - strong, powerful, beautiful. I believe that at the end of the century the use of words and general educated opinion will have altered so much that one will be able to speak of machines thinking without expecting to be contradicted."]
-#     sigs = minhash(documents, 5)
+    documents = ["The horse raced past the barn fell. The complex houses married and single soldiers and their families",
+                 "There is nothing either good or bad, but thinking makes it so. I burn, I pine, I perish. Come what come may, time and the hour runs through the roughest day",
+                 "Be a yardstick of quality. A horse is the projection of peoples' dreams about themselves - strong, powerful, beautiful. I believe that at the end of the century the use of words and general educated opinion will have altered so much that one will be able to speak of machines thinking without expecting to be contradicted."]
+    sigs = minhash(documents, 5)
       
