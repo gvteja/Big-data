@@ -17,6 +17,12 @@ from multiprocessing import Process, Manager
 from pprint import pprint
 import numpy as np
 
+def str_hash(s):
+    s = str(s)
+    h = 5381
+    for c in s:
+        h = ((h << 5) + h) + ord(c)
+    return h
 
 ##########################################################################
 ##########################################################################
@@ -58,7 +64,7 @@ class MyMapReduce:#[TODO]
 
     def partitionFunction(self,k): #[TODO]
         #given a key returns the reduce task to send it
-        node_number = hash(str(k)) % self.num_reduce_tasks
+        node_number = str_hash(str(k)) % self.num_reduce_tasks
         return node_number
 
 
@@ -190,7 +196,7 @@ class MatrixMultMR(MyMapReduce): #[TODO]
         kv_dict = {}
         label, r, c = k
         if label.lower() == "m":
-            for i in range(self.h2):
+            for i in range(self.w2):
                 kv_dict[(r, i)] = (label, c, v)
         else:
             for i in range(self.h1):
@@ -234,35 +240,51 @@ def minhash(documents, k=5): #[TODO]
         all_shingles.update(shingles[-1])
         # print doc
         # print shingles[-1]
-        # print len(shingles[-1]), len(all_shingles)
+        #print len(shingles[-1]), len(all_shingles)
 
     num_shingles = len(all_shingles)
-    num_hashes = 50
+    num_hashes = 100
 
     signatures = np.full((num_hashes, num_docs), np.iinfo(np.int64).max, np.int64)
 
     #Perform efficient Minhash 
     #[TODO]
-    def int_hash(x):
-        x = ((x >> 16) ^ x) * 0x45d9f3b
-        x = ((x >> 16) ^ x) * 0x45d9f3b
-        x = (x >> 16) ^ x
-        return x
 
+    # generate tuples of coefficents for creating different hash functions
+    # (m, a) -> m * hash_val + a
     cofs = []
     for i in range(num_hashes):
         cofs.append((np.random.randint(2, 1000), np.random.randint(2, 1000)))
 
-    for (i, s) in enumerate(all_shingles):
+    for s in all_shingles:
+        # going through all shingles
+        # equivalent to going through each row in Charecteristic matrix
+        r = []
+        for j in range(num_docs):
+            r.append(1 if s in shingles[j] else 0)
         h = []
         for (m, a) in cofs:
-            h.append((m * int_hash(i) + a) % num_shingles)
+            # compute hash function i for current row
+            h.append((m * str_hash(r) + a) % num_hashes)
+            #h.append(np.random.randint(1, num_hashes))
         for j in range(num_docs):
-            if s in shingles[j]:
-                # its a 1 in CM
-                for k in range(num_hashes):
-                    signatures[k][j] = min(h[k], signatures[k][j])
+            if r[j]:
+                # its a 1 in Charecteristic matrix
+                for i in range(num_hashes):
+                    # update all signatures in this doc
+                    signatures[i][j] = min(h[i], signatures[i][j])
 
+    # compute sim
+    for i in range(num_docs - 1):
+        for j in range(i+1, num_docs):
+            s1, s2 = shingles[i], shingles[j]
+            js = len(s1.intersection(s2)) / float(len(s1|s2))
+            matched = 0
+            for k in range(num_hashes):
+                if signatures[k][i] == signatures[k][j]:
+                    matched += 1
+            ejs = float(matched) / num_hashes
+            print i, j, js, ejs
 
     #Print signature matrix and return them 
     #[DONE]
