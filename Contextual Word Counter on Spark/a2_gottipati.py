@@ -1,5 +1,6 @@
 # _*_ coding:utf-8 _*_
 import re
+from pyspark import SparkContext
 from os import path
 
 feel_words_regex = re.compile(r'(?<=\bi feel\s)(\w+)')
@@ -29,6 +30,7 @@ filenames = [
 filenames = [path.join(base_dir, fn) for fn in filenames]
 combined_path = ','.join(filenames)
 
+sc = SparkContext(appName="ContextualWordCount")
 counts = sc.textFile(combined_path)\
             .flatMap(extractWordsRegex)\
             .reduceByKey(lambda x,y: x + y)\
