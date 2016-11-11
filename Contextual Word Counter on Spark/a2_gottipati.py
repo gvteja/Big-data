@@ -19,20 +19,32 @@ def extractWordsRegex(line):
 
     return counts.items()
 
-base_dir = '/Users/bobby/Downloads'
-filenames = [
-    'CC-MAIN-20160924173739-00000-ip-10-143-35-109.ec2.internal.warc.wet.gz',
-    'CC-MAIN-20160924173739-00001-ip-10-143-35-109.ec2.internal.warc.wet.gz',
-    'CC-MAIN-20160924173739-00002-ip-10-143-35-109.ec2.internal.warc.wet.gz',
-    'CC-MAIN-20160924173739-00003-ip-10-143-35-109.ec2.internal.warc.wet.gz',
-    'CC-MAIN-20160924173739-00004-ip-10-143-35-109.ec2.internal.warc.wet.gz'
-    ]
-filenames = [path.join(base_dir, fn) for fn in filenames]
-combined_path = ','.join(filenames)
+def computeCounts(rdd):
+    return rdd.flatMap(extractWordsRegex)\
+        .reduceByKey(lambda x,y: x + y)
+
+
+wet_path = 's3://commoncrawl/crawl-data/CC-MAIN-2016-40/wet.paths.gz'
+cc_prefix = 's3://commoncrawl/'
+my_bucket = 's3://vijay-bd'
+
+first5k = sc.textFile(wet_path).take(5000)
+firstk, next4k = first5k[:1000], first5k[1000:]
+firstk = [path.join(cc_prefix, fn) for fn in firstk]
+next4k = [path.join(cc_prefix, fn) for fn in next4k]
+firstk_combined = ','.join(firstk)
+next4k_combined = ','.join(next4k)
+
 
 sc = SparkContext(appName="ContextualWordCount")
-counts = sc.textFile(combined_path)\
-            .flatMap(extractWordsRegex)\
-            .reduceByKey(lambda x,y: x + y)\
-            .filter(lambda x: x[1] >= 30)
-counts.saveAsTextFile(path.join(base_dir, 'results.txt'))
+firstk_counts = computeCounts(sc.textFile(firstk))
+firstk_counts.filter(lambda x: x[1] >= 30)\
+    .coalesce(1)\
+    .saveAsTextFile(path.join(my_bucket, 'firstk.txt'))
+
+next4k_counts = computeCounts(sc.textFile(next4k))
+first5k_counts = firstk_counts.union(next4k_counts)\
+    .reduceByKey(lambda x,y: x + y)
+first5k_counts.filter(lambda x: x[1] >= 30)\
+    .coalesce(1)\
+    .saveAsTextFile(path.join(my_bucket, 'first5k.txt'))
