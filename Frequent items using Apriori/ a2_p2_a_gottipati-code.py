@@ -26,7 +26,8 @@ transactions = user_item_map.map(lambda x: (x[0], [x[1]]))\
     .persist(StorageLevel.MEMORY_AND_DISK)
 
 def generateCandidate(tup):
-    s1, s2 = tup
+    (s1, _),  (s2, _) = tup
+    s1, s2 = set(s1), set(s2)
     n = len(s1)
     union = s1.union(s2)
     if len(union) != n + 1:
@@ -39,26 +40,46 @@ def generateCandidate(tup):
         # i.e. (s1, s2) and (s2, s1)
         # so skipping the pair where s1 has the bigger eleme in the union
         return []
-    return union
+    return tuple(sorted(union))
 
-def isFrequent(s):
-    # return true if the item-set is valid and frequent
-    if not s:
-        return False
+def generatePruneDependencies(tup):
+    # assuming the tuple here is already sorted
+    l = list(s)
+    n = len(l)
+    dependencies = []
+    for i in range(n):
+        dep = l[:i] + l[i+1:]
+        dependencies.append((tuple(dep), tup))
 
-    # ideally would want to create a bcast var
-    # but not sure if its legal
-    # not sure about this nested operations too
-    return \
-        transactions.map(lambda t: all((item in t for item in s)))\
-        .reduce(lambda x,y: x + y)
+    return dependencies
 
-set1 = user_item_map.values()\
-    .distinct()\
-    .map(lambda x: {x})
-set2 = set1.cartesian(set1)\
+def isSetInTransaction(tup):
+    s, t = tup
+    in_t = all((item in t for item in s))
+    val = 1 if in_t else 0
+    return (s, val)
+
+set1 = user_item_map.map(lambda x: (x[1], 1))\
+    .reduceByKey(lambda x,y: x + y)\
+    .filter(lambda x: x[1] >= 10)\
+    .map(lambda x: ((x[0],), None))
+prune_deps = set1.cartesian(set1)\
     .map(generateCandidate)\
-    .filter(isFrequent)
+    .filter(lambda x: len(x) > 0)\
+    .flatMap(generatePruneDependencies)
+pruned_set2 = set1.leftOuterJoin(prune_deps)\
+    .map(lambda x: (x[0], x[1][1]))\
+    .filter(lambda x: x[1])\
+    .map(lambda x: (x[1], 1))\
+    .reduceByKey(lambda x,y: x + y)\
+    .filter(lambda x: x[1] == 2)\
+    .map(lambda x: x[0])
+
+set2 = pruned_set2.cartesian(transactions)\
+    .map(isSetInTransaction)\
+    .reduceByKey(lambda x,y: x + y)\
+    .filter(lambda x: x[1] >= 10)\
+    .map(lambda x: ((x[0],), None))
 
 # For beauty product ratings
 # In [6]: user_item_map.count()
@@ -88,11 +109,6 @@ set2 = set1.cartesian(set1)\
 # filter cand by support
 # freq[k] = filtered cand
 
-# todo:
-# cand gen
-# prune
-# count cand
-
 # one line of thought:
 # do a group by on the user_item_map. we get transactions, kind of
 # maybe map value and create a set out of it
@@ -104,7 +120,13 @@ set2 = set1.cartesian(set1)\
 #     eg: (1,2) with (2,3) and (2,3) with (1,2) => (1,2,3)
 
 # prune:
-#     filter fn on cand set which check all k-1 subsets is in old k-1 subset
+#     filter fn on cand set which check that all k subsets are in the old k-1 frequent set
+# so basically each cand has k dependencies
+# so for every cand of size k, gen k dep with dep as key and val as cand
+# then do a left outer join or something of the k-1 frequent set with the dep set
+# then swap key-val pair and reduce by key with cand set now
+# use tuple(sorted(set)) to generate hashable key for all these
+# now after agg prune everything with less than k-1
 #     maybe use a all(generator for set check)
 
 # and then for count do a reduce/agg
@@ -112,3 +134,7 @@ set2 = set1.cartesian(set1)\
 #         for each cand, we need a bcase for its set of elems
 #     can we use a broadcast var? can we use same var name and over-write it?
 #     no right? bcast var cannot be written to i guess
+
+# maybe do a cartesian bw cand and transactions
+# then map and return if key/cand is present in transaction
+# then reduceByKey to get support
