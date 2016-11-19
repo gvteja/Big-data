@@ -6,6 +6,25 @@ def extractItemUser(line):
     user, item, _, _ = line.split(',')
     return (item, user)
 
+rdd = sc.textFile('hdfs:/ratings/ratings_Video_Games.10k.csv.gz', use_unicode=False)
+#rdd = sc.textFile('/Users/bobby/Downloads/ratings_Beauty.csv', use_unicode=False)
+item_user_map = rdd.map(extractItemUser).distinct()
+items_to_remove = item_user_map.map(lambda x: (x[0], 1))\
+    .reduceByKey(lambda x,y: x + y)\
+    .filter(lambda x: x[1] < 10)
+item_user_map = item_user_map.subtractByKey(items_to_remove)
+
+user_item_map = item_user_map.map(lambda x: (x[1], x[0]))
+users_to_remove = user_item_map.map(lambda x: (x[0], 1))\
+    .reduceByKey(lambda x,y: x + y)\
+    .filter(lambda x: x[1] < 5)
+user_item_map = user_item_map.subtractByKey(users_to_remove)
+
+transactions = user_item_map.map(lambda x: (x[0], [x[1]]))\
+    .reduceByKey(lambda x,y: x + y)\
+    .map(lambda x: set(x[1]))\
+    .persist(StorageLevel.MEMORY_AND_DISK)
+
 def generateCandidate(tup):
     s1, s2 = tup
     n = len(s1)
@@ -27,35 +46,19 @@ def isFrequent(s):
     if not s:
         return False
 
-    # todo: check frequency on transactions
-
-
-rdd = sc.textFile('hdfs:/ratings/ratings_Video_Games.10k.csv.gz', use_unicode=False)
-#rdd = sc.textFile('/Users/bobby/Downloads/ratings_Beauty.csv', use_unicode=False)
-item_user_map = rdd.map(extractItemUser).distinct()
-items_to_remove = item_user_map.map(lambda x: (x[0], 1))\
-    .reduceByKey(lambda x,y: x + y)\
-    .filter(lambda x: x[1] < 10)
-item_user_map = item_user_map.subtractByKey(items_to_remove)
-
-user_item_map = item_user_map.map(lambda x: (x[1], x[0]))
-users_to_remove = user_item_map.map(lambda x: (x[0], 1))\
-    .reduceByKey(lambda x,y: x + y)\
-    .filter(lambda x: x[1] < 5)
-user_item_map = user_item_map.subtractByKey(users_to_remove)
-
-transactions = user_item_map.map(lambda x: (x[0], [x[1]]))\
-    .reduceByKey(lambda x,y: x + y)\
-    .map(lambda x: set(x[1]))\
-    .persist(StorageLevel.MEMORY_AND_DISK)
-
+    # ideally would want to create a bcast var
+    # but not sure if its legal
+    # not sure about this nested operations too
+    return \
+        transactions.map(lambda t: all((item in t for item in s)))\
+        .reduce(lambda x,y: x + y)
 
 set1 = user_item_map.values()\
     .distinct()\
     .map(lambda x: {x})
 set2 = set1.cartesian(set1)\
     .map(generateCandidate)\
-    .filter(prune)
+    .filter(isFrequent)
 
 # For beauty product ratings
 # In [6]: user_item_map.count()
