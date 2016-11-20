@@ -8,7 +8,7 @@ def extractItemUser(line):
     user, item, _, _ = [x.strip() for x in line.split(',')]
     return (item, user)
 
-rdd = sc.textFile('hdfs:/ratings/ratings_Video_Games.10k.csv.gz', use_unicode=False)
+rdd = sc.textFile('hdfs:/ratings/ratings_Video_Games.csv.gz', use_unicode=False)
 #rdd = sc.textFile('/Users/bobby/Downloads/ratings_Beauty.csv', use_unicode=False)
 item_user_map = rdd.map(extractItemUser).distinct()
 items_to_remove = item_user_map.map(lambda x: (x[0], 1))\
@@ -26,6 +26,7 @@ transactions = user_item_map.map(lambda x: (x[0], [x[1]]))\
     .reduceByKey(lambda x,y: x + y)\
     .map(lambda x: set(x[1]))\
     .persist(StorageLevel.MEMORY_AND_DISK)
+transactions.count() # to trigger caching
 
 def generateCandidate(tup):
     (s1, _),  (s2, _) = tup
@@ -93,7 +94,6 @@ while current_k <= desired_k:
     current_k += 1
 
 
-
 test_data1 = '''1,2,5
 2,4
 2,3
@@ -115,31 +115,6 @@ test_data2 = '''1,2,5
 test = sc.parallelize(test_data2.split('\n'))\
     .map(lambda x: set(x.split(',')))
 support = 2
-
-set1 = test.flatMap(lambda x: [(i, 1) for i in x])\
-    .reduceByKey(lambda x,y: x + y)\
-    .filter(lambda x: x[1] >= support)\
-    .map(lambda x: ((x[0],), None))
-prune_deps = set1.cartesian(set1)\
-    .map(generateCandidate)\
-    .filter(lambda x: len(x) > 0)\
-    .distinct()\
-    .flatMap(generatePruneDependencies)
-pruned_set2 = set1.leftOuterJoin(prune_deps)\
-    .map(lambda x: (x[0], x[1][1]))\
-    .filter(lambda x: x[1])\
-    .map(lambda x: (x[1], 1))\
-    .reduceByKey(lambda x,y: x + y)\
-    .filter(lambda x: x[1] == 2)\
-    .keys()
-
-set2 = pruned_set2.cartesian(test)\
-    .map(isSetInTransaction)\
-    .reduceByKey(lambda x,y: x + y)\
-    .filter(lambda x: x[1] >= support)\
-    .map(lambda x: (x[0], None))
-
-
 
 previous_set = test.flatMap(lambda x: [(i, 1) for i in x])\
     .reduceByKey(lambda x,y: x + y)\
@@ -176,6 +151,13 @@ while current_k <= desired_k:
 # todo: take care of persiting prev k-set and transactions
 # are transactions as intensive as the other ones?
 # check stages to understand
+# another opti - make transactions as bcast var
+# then to count, map on cand set
+#   in the map function, count all the times the current set is in transactions
+# or maybe bcast the candidates because they might be smaller than transactions - not true. can gen n^2 (relative to freq set 1) candidates
+# also explore mapPartitions
+# also think about optimizing pruning. generating dependencies are creating too many tuples
+# explore dataframes api too maybe
 
 # For beauty product ratings
 # In [6]: user_item_map.count()
