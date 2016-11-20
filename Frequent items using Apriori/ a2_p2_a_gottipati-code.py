@@ -2,11 +2,13 @@ from pyspark import SparkContext, StorageLevel
 
 sc = SparkContext(appName="Apriori_Vijay")
 
+support = 10
+
 def extractItemUser(line):
-    user, item, _, _ = line.split(',')
+    user, item, _, _ = [x.strip() for x in line.split(',')]
     return (item, user)
 
-rdd = sc.textFile('hdfs:/ratings/ratings_Video_Games.10k.csv.gz', use_unicode=False)
+rdd = sc.textFile('hdfs:/ratings/ratings_Video_Games.csv.gz', use_unicode=False)
 #rdd = sc.textFile('/Users/bobby/Downloads/ratings_Beauty.csv', use_unicode=False)
 item_user_map = rdd.map(extractItemUser).distinct()
 items_to_remove = item_user_map.map(lambda x: (x[0], 1))\
@@ -38,13 +40,13 @@ def generateCandidate(tup):
     if e1 > e2:
         # cartesian product generates duplicates
         # i.e. (s1, s2) and (s2, s1)
-        # so skipping the pair where s1 has the bigger eleme in the union
+        # so skipping the pair where s1 has the bigger element in the union
         return []
     return tuple(sorted(union))
 
 def generatePruneDependencies(tup):
     # assuming the tuple here is already sorted
-    l = list(s)
+    l = list(tup)
     n = len(l)
     dependencies = []
     for i in range(n):
@@ -61,11 +63,12 @@ def isSetInTransaction(tup):
 
 set1 = user_item_map.map(lambda x: (x[1], 1))\
     .reduceByKey(lambda x,y: x + y)\
-    .filter(lambda x: x[1] >= 10)\
+    .filter(lambda x: x[1] >= support)\
     .map(lambda x: ((x[0],), None))
 prune_deps = set1.cartesian(set1)\
     .map(generateCandidate)\
     .filter(lambda x: len(x) > 0)\
+    .distinct()\
     .flatMap(generatePruneDependencies)
 pruned_set2 = set1.leftOuterJoin(prune_deps)\
     .map(lambda x: (x[0], x[1][1]))\
@@ -73,13 +76,101 @@ pruned_set2 = set1.leftOuterJoin(prune_deps)\
     .map(lambda x: (x[1], 1))\
     .reduceByKey(lambda x,y: x + y)\
     .filter(lambda x: x[1] == 2)\
-    .map(lambda x: x[0])
+    .map(lambda x: x[0])\
+    .persist()
 
 set2 = pruned_set2.cartesian(transactions)\
     .map(isSetInTransaction)\
     .reduceByKey(lambda x,y: x + y)\
-    .filter(lambda x: x[1] >= 10)\
+    .filter(lambda x: x[1] >= support)\
     .map(lambda x: ((x[0],), None))
+
+pruned_set2.unpersist()
+
+
+
+test_data1 = '''1,2,5
+2,4
+2,3
+1,2,4
+1,3
+2,3
+1,3
+1,2,3,5
+1,2,3'''
+test_data2 = '''1,2,5
+2,4
+2,3
+1,2,4,5
+1,3
+2,3
+1,3
+1,2,3,5
+1,2,3'''
+test = sc.parallelize(test_data2.split('\n'))\
+    .map(lambda x: set(x.split(',')))
+support = 2
+
+set1 = test.flatMap(lambda x: [(i, 1) for i in x])\
+    .reduceByKey(lambda x,y: x + y)\
+    .filter(lambda x: x[1] >= support)\
+    .map(lambda x: ((x[0],), None))
+prune_deps = set1.cartesian(set1)\
+    .map(generateCandidate)\
+    .filter(lambda x: len(x) > 0)\
+    .distinct()\
+    .flatMap(generatePruneDependencies)
+pruned_set2 = set1.leftOuterJoin(prune_deps)\
+    .map(lambda x: (x[0], x[1][1]))\
+    .filter(lambda x: x[1])\
+    .map(lambda x: (x[1], 1))\
+    .reduceByKey(lambda x,y: x + y)\
+    .filter(lambda x: x[1] == 2)\
+    .keys()
+
+set2 = pruned_set2.cartesian(test)\
+    .map(isSetInTransaction)\
+    .reduceByKey(lambda x,y: x + y)\
+    .filter(lambda x: x[1] >= support)\
+    .map(lambda x: (x[0], None))
+
+
+
+previous_set = test.flatMap(lambda x: [(i, 1) for i in x])\
+    .reduceByKey(lambda x,y: x + y)\
+    .filter(lambda x: x[1] >= support)\
+    .map(lambda x: ((x[0],), None))
+
+desired_k = 3
+current_k = 2
+while current_k <= desired_k:
+    prune_deps = previous_set.cartesian(previous_set)\
+        .map(generateCandidate)\
+        .filter(lambda x: len(x) > 0)\
+        .distinct()\
+        .flatMap(generatePruneDependencies)
+    pruned_candidates = previous_set.leftOuterJoin(prune_deps)\
+        .map(lambda x: (x[0], x[1][1]))\
+        .filter(lambda x: x[1])\
+        .map(lambda x: (x[1], 1))\
+        .reduceByKey(lambda x,y: x + y)\
+        .filter(lambda x: x[1] == current_k)\
+        .keys()
+
+    current_set = pruned_candidates.cartesian(test)\
+        .map(isSetInTransaction)\
+        .reduceByKey(lambda x,y: x + y)\
+        .filter(lambda x: x[1] >= support)\
+        .map(lambda x: (x[0], None))
+
+    previous_set = current_set
+    current_k += 1
+    print current_set.collect()
+
+
+# todo: take care of persiting prev k-set and transactions
+# are transactions as intensive as the other ones?
+# check stages to understand
 
 # For beauty product ratings
 # In [6]: user_item_map.count()
