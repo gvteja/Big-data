@@ -62,12 +62,19 @@ def isSetInTransaction(tup):
     val = 1 if in_t else 0
     return (s, val)
 
+def countTransactions(s):
+    count = 0
+    for t in transactions.value:
+        in_t = all((item in t for item in s))
+        count += 1 if in_t else 0
+    return (s, count)
+
 previous_set = user_item_map.map(lambda x: (x[1], 1))\
     .reduceByKey(lambda x,y: x + y)\
     .filter(lambda x: x[1] >= support)\
     .map(lambda x: ((x[0],), None))
 
-desired_k = 4
+desired_k = 2
 current_k = 2
 while current_k <= desired_k:
     prune_deps = previous_set.cartesian(previous_set)\
@@ -75,7 +82,7 @@ while current_k <= desired_k:
         .filter(lambda x: len(x) > 0)\
         .distinct()\
         .flatMap(generatePruneDependencies)
-    pruned_candidates = previous_set.leftOuterJoin(prune_deps)\
+    pruned_candidates = previous_set.join(prune_deps)\
         .map(lambda x: (x[0], x[1][1]))\
         .filter(lambda x: x[1])\
         .map(lambda x: (x[1], 1))\
@@ -114,6 +121,7 @@ test_data2 = '''1,2,5
 1,2,3'''
 test = sc.parallelize(test_data2.split('\n'))\
     .map(lambda x: set(x.split(',')))
+transactions = test
 support = 2
 
 previous_set = test.flatMap(lambda x: [(i, 1) for i in x])\
@@ -129,7 +137,7 @@ while current_k <= desired_k:
         .filter(lambda x: len(x) > 0)\
         .distinct()\
         .flatMap(generatePruneDependencies)
-    pruned_candidates = previous_set.leftOuterJoin(prune_deps)\
+    pruned_candidates = previous_set.join(prune_deps)\
         .map(lambda x: (x[0], x[1][1]))\
         .filter(lambda x: x[1])\
         .map(lambda x: (x[1], 1))\
@@ -158,6 +166,12 @@ while current_k <= desired_k:
 # also explore mapPartitions
 # also think about optimizing pruning. generating dependencies are creating too many tuples
 # explore dataframes api too maybe
+
+replace leftOuterJoin with join?
+duplaicte transaction on all nodes to disk?
+try reducing transactions by count
+try foreach
+flatmap on count and dontreturn not found tuple
 
 # For beauty product ratings
 # In [6]: user_item_map.count()
