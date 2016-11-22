@@ -8,7 +8,7 @@ def extractItemUser(line):
     user, item, _, _ = [x.strip() for x in line.split(',')]
     return (item, user)
 
-rdd = sc.textFile('hdfs:/ratings/ratings_Video_Games.csv.gz', use_unicode=False)
+rdd = sc.textFile('hdfs:/ratings/ratings_Video_Games.10k.csv.gz', use_unicode=False)
 #rdd = sc.textFile('/Users/bobby/Downloads/ratings_Beauty.csv', use_unicode=False)
 item_user_map = rdd.map(extractItemUser).distinct()
 items_to_remove = item_user_map.map(lambda x: (x[0], 1))\
@@ -83,9 +83,7 @@ while current_k <= desired_k:
         .distinct()\
         .flatMap(generatePruneDependencies)
     pruned_candidates = previous_set.join(prune_deps)\
-        .map(lambda x: (x[0], x[1][1]))\
-        .filter(lambda x: x[1])\
-        .map(lambda x: (x[1], 1))\
+        .map(lambda x: (x[1][1], 1))\
         .reduceByKey(lambda x,y: x + y)\
         .filter(lambda x: x[1] == current_k)\
         .keys()
@@ -138,14 +136,12 @@ while current_k <= desired_k:
         .distinct()\
         .flatMap(generatePruneDependencies)
     pruned_candidates = previous_set.join(prune_deps)\
-        .map(lambda x: (x[0], x[1][1]))\
-        .filter(lambda x: x[1])\
-        .map(lambda x: (x[1], 1))\
+        .map(lambda x: (x[1][1], 1))\
         .reduceByKey(lambda x,y: x + y)\
         .filter(lambda x: x[1] == current_k)\
         .keys()
 
-    current_set = pruned_candidates.cartesian(test)\
+    current_set = pruned_candidates.cartesian(transactions)\
         .map(isSetInTransaction)\
         .reduceByKey(lambda x,y: x + y)\
         .filter(lambda x: x[1] >= support)\
@@ -170,6 +166,8 @@ while current_k <= desired_k:
 replace leftOuterJoin with join?
 duplaicte transaction on all nodes to disk?
 try reducing transactions by count
+also do join on previous set with transacion. and filter out all transactions without atleast one frequent itemset
+also maybe do one more filtering on the transaction value. filter out all items which are not part of any frequent set. but tis is just memory saving in value. might still be useful
 try foreach
 flatmap on count and dontreturn not found tuple
 
