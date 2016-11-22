@@ -24,7 +24,7 @@ user_item_map = user_item_map.subtractByKey(users_to_remove)
 
 transactions = user_item_map.map(lambda x: (x[0], [x[1]]))\
     .reduceByKey(lambda x,y: x + y)\
-    .map(lambda x: set(x[1]))\
+    .map(lambda x: tuple(x[1]))\
     .persist(StorageLevel.MEMORY_AND_DISK)
 transactions.count() # to trigger caching
 
@@ -58,6 +58,7 @@ def generatePruneDependencies(tup):
 
 def isSetInTransaction(tup):
     s, t = tup
+    t = set(t)
     in_t = all((item in t for item in s))
     val = 1 if in_t else 0
     return (s, val)
@@ -65,6 +66,7 @@ def isSetInTransaction(tup):
 def countTransactions(s):
     count = 0
     for t in transactions.value:
+        t = set(t)
         in_t = all((item in t for item in s))
         count += 1 if in_t else 0
     return (s, count)
@@ -118,7 +120,7 @@ test_data2 = '''1,2,5
 1,2,3,5
 1,2,3'''
 test = sc.parallelize(test_data2.split('\n'))\
-    .map(lambda x: set(x.split(',')))
+    .map(lambda x: tuple(x.split(',')))
 transactions = test
 support = 2
 
@@ -170,6 +172,9 @@ also do join on previous set with transacion. and filter out all transactions wi
 also maybe do one more filtering on the transaction value. filter out all items which are not part of any frequent set. but tis is just memory saving in value. might still be useful
 try foreach
 flatmap on count and dontreturn not found tuple
+instead of generating dep, directly cartesian previous with candidates
+    then count if prev set in cand. then reduce by candidates. we should have k-1 for all pruned candidates
+do a join on previous set for cand gen instead of cartesian
 
 # For beauty product ratings
 # In [6]: user_item_map.count()
