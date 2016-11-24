@@ -45,6 +45,15 @@ def generateCandidate(tup):
         return []
     return tuple(sorted(union))
 
+def generateCandidate2(tup):
+    (common_items, (i1, i2)) = tup
+    if not i1 or not i2:
+        # generating from 1-set
+        common_items = [] 
+    if i1 < i2:
+        new_items = [i1, i2]
+    return tuple(sorted(union))
+
 def generatePruneDependencies(tup):
     # assuming the tuple here is already sorted
     l = list(tup)
@@ -62,14 +71,6 @@ def isSetInTransaction(tup):
     in_t = all((item in t for item in s))
     val = 1 if in_t else 0
     return (s, val)
-
-def countTransactions(s):
-    count = 0
-    for t in transactions.value:
-        t = set(t)
-        in_t = all((item in t for item in s))
-        count += 1 if in_t else 0
-    return (s, count)
 
 previous_set = user_item_map.map(lambda x: (x[1], 1))\
     .reduceByKey(lambda x,y: x + y)\
@@ -175,6 +176,7 @@ flatmap on count and dontreturn not found tuple
 instead of generating dep, directly cartesian previous with candidates
     then count if prev set in cand. then reduce by candidates. we should have k-1 for all pruned candidates
 do a join on previous set for cand gen instead of cartesian
+change partition to sc.defaultParallelism * 2 or 3
 
 # For beauty product ratings
 # In [6]: user_item_map.count()
