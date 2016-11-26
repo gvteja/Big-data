@@ -3,6 +3,7 @@ from pyspark import SparkContext, StorageLevel
 sc = SparkContext(appName="Apriori_Vijay")
 
 support = 10
+aggressive_pruning = False
 
 def extractItemUser(line):
     user, item, _, _ = [x.strip() for x in line.split(',')]
@@ -29,73 +30,50 @@ transactions = user_item_map.map(lambda x: (x[0], [x[1]]))\
 transactions.count() # to trigger caching
 
 def generateCandidate(tup):
-    (s1, _),  (s2, _) = tup
-    s1, s2 = set(s1), set(s2)
-    n = len(s1)
-    union = s1.union(s2)
-    if len(union) != n + 1:
-        # cannot combine the two sets
-        return []
-    [e2] = union - s1
-    [e1] = union - s2
-    if e1 > e2:
-        # cartesian product generates duplicates
-        # i.e. (s1, s2) and (s2, s1)
-        # so skipping the pair where s1 has the bigger element in the union
-        return []
-    return tuple(sorted(union))
-
-def generateCandidate2(tup):
     (common_items, (i1, i2)) = tup
-    if not i1 or not i2:
-        # generating from 1-set
-        common_items = [] 
     if i1 < i2:
-        new_items = [i1, i2]
-    return tuple(sorted(union))
+        combined_items = common_items + (i1, i2)
+        return [combined_items]
+    return []
 
-def generatePruneDependencies(tup):
-    # assuming the tuple here is already sorted
-    l = list(tup)
-    n = len(l)
-    dependencies = []
-    for i in range(n):
-        dep = l[:i] + l[i+1:]
-        dependencies.append((tuple(dep), tup))
+def doesContain(container, items):
+    container = set(container)
+    return all((item in container for item in items))
 
-    return dependencies
-
-def isSetInTransaction(tup):
-    s, t = tup
-    t = set(t)
-    in_t = all((item in t for item in s))
-    val = 1 if in_t else 0
-    return (s, val)
-
-previous_set = user_item_map.map(lambda x: (x[1], 1))\
+# 1-set frequent items
+frequent_items = user_item_map.map(lambda x: (x[1], 1))\
     .reduceByKey(lambda x,y: x + y)\
-    .filter(lambda x: x[1] >= support)\
-    .map(lambda x: ((x[0],), None))
+    .filter(lambda x: x[1] >= support)
+
+previous_set = frequent_items.keys()
 
 desired_k = 2
 current_k = 2
 while current_k <= desired_k:
-    prune_deps = previous_set.cartesian(previous_set)\
-        .map(generateCandidate)\
-        .filter(lambda x: len(x) > 0)\
-        .distinct()\
-        .flatMap(generatePruneDependencies)
-    pruned_candidates = previous_set.join(prune_deps)\
-        .map(lambda x: (x[1][1], 1))\
-        .reduceByKey(lambda x,y: x + y)\
-        .filter(lambda x: x[1] == current_k)\
-        .keys()
+    if current_k == 2:
+        # pruned_candidates are just unique pairs of
+        # 1-set frequent items
+        candidates = previous_set.cartesian(previous_set)\
+            .filter(lambda x: x[0] < x[1])
+    else:
+        previous_set = previous_set.map(lambda x: (x[:-1], x[-1]))
+        candidates = previous_set.join(previous_set)\
+            .flatMap(generateCandidate)
 
-    current_set = pruned_candidates.cartesian(transactions)\
-        .map(isSetInTransaction)\
+    if aggressive_pruning: 
+        candidates = candidates.cartesian(previous_set)\
+            .filter(lambda x: doesContain(x[0], x[1]))\
+            .map(lambda x: (x[0], 1))\
+            .reduceByKey(lambda x,y: x + y)\
+            .filter(lambda x: x[1] == current_k)\
+            .keys()
+    
+    current_set = candidates.cartesian(transactions)\
+        .filter(lambda x: doesContain(x[1], x[0]))\
+        .map(lambda x: (x[0], 1))\
         .reduceByKey(lambda x,y: x + y)\
         .filter(lambda x: x[1] >= support)\
-        .map(lambda x: (x[0], None))
+        .keys()
 
     print '{0}-set count: {1}'.format(current_k, current_set.count())
     previous_set = current_set
@@ -125,30 +103,41 @@ test = sc.parallelize(test_data2.split('\n'))\
 transactions = test
 support = 2
 
-previous_set = test.flatMap(lambda x: [(i, 1) for i in x])\
+# 1-set frequent items
+frequent_items = test.flatMap(lambda x: [(i, 1) for i in x])\
     .reduceByKey(lambda x,y: x + y)\
-    .filter(lambda x: x[1] >= support)\
-    .map(lambda x: ((x[0],), None))
+    .filter(lambda x: x[1] >= support)
+
+previous_set = frequent_items.keys()
 
 desired_k = 4
 current_k = 2
 while current_k <= desired_k:
-    prune_deps = previous_set.cartesian(previous_set)\
-        .map(generateCandidate)\
-        .filter(lambda x: len(x) > 0)\
-        .distinct()\
-        .flatMap(generatePruneDependencies)
-    pruned_candidates = previous_set.join(prune_deps)\
-        .map(lambda x: (x[1][1], 1))\
-        .reduceByKey(lambda x,y: x + y)\
-        .filter(lambda x: x[1] == current_k)\
-        .keys()
+    if current_k == 2:
+        # pruned_candidates are just unique pairs of
+        # 1-set frequent items
+        candidates = previous_set.cartesian(previous_set)\
+            .filter(lambda x: x[0] < x[1])
+    else:
+        previous_set = previous_set.map(lambda x: (x[:-1], x[-1]))
+        candidates = previous_set.join(previous_set)\
+            .flatMap(generateCandidate)
 
-    current_set = pruned_candidates.cartesian(transactions)\
-        .map(isSetInTransaction)\
+    if aggressive_pruning: 
+        candidates = candidates.cartesian(previous_set)\
+            .filter(lambda x: doesContain(x[0], x[1]))\
+            .map(lambda x: (x[0], 1))\
+            .reduceByKey(lambda x,y: x + y)\
+            .filter(lambda x: x[1] == current_k)\
+            .keys()
+    
+    current_set = candidates.cartesian(transactions)\
+        .filter(lambda x: doesContain(x[1], x[0]))\
+        .map(lambda x: (x[0], 1))\
         .reduceByKey(lambda x,y: x + y)\
         .filter(lambda x: x[1] >= support)\
-        .map(lambda x: (x[0], None))
+        .keys()
+
 
     previous_set = current_set
     current_k += 1
@@ -172,7 +161,7 @@ try reducing transactions by count
 also do join on previous set with transacion. and filter out all transactions without atleast one frequent itemset
 also maybe do one more filtering on the transaction value. filter out all items which are not part of any frequent set. but tis is just memory saving in value. might still be useful
 try foreach
-flatmap on count and dontreturn not found tuple
+flatMap on count and dontreturn not found tuple
 instead of generating dep, directly cartesian previous with candidates
     then count if prev set in cand. then reduce by candidates. we should have k-1 for all pruned candidates
 do a join on previous set for cand gen instead of cartesian
