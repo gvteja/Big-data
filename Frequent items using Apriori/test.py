@@ -6,7 +6,7 @@ import pickle
 support = 2
 aggressive_pruning = False
 #input_file = 'test'
-input_file = 'hdfs:/ratings/ratings_Video_Games.10k.csv.gz'
+input_file = 'hdfs:/ratings/ratings_Video_Games.csv.gz'
 basename = path.basename(input_file)
 ts = str(time())
 results = []

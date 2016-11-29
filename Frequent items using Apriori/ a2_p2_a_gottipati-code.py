@@ -166,6 +166,15 @@ instead of generating dep, directly cartesian previous with candidates
     then count if prev set in cand. then reduce by candidates. we should have k-1 for all pruned candidates
 do a join on previous set for cand gen instead of cartesian
 change partition to sc.defaultParallelism * 2 or 3
+add check to do pruning only for 3-sets and above
+add check to coninue genrating only if count of prev set > 0
+make make 1-set frequent items into a broadcast var
+can we make all candidates counts as bcast too?
+    make we can do this:
+    make all l-sets as bcast var
+    do a flatMap on transactions, in the map fn, generate all k-set items where all its k-1 subsets are in l-set. then do a reduceByKey and then filter
+check if something is broadcast join
+refactor transactions to directly add tuple instead of adding as list and then making tuples. is it really better though? its like adding immutable strings, since tuples are immutable but lists are. so perf wise might not be really better, but codewise it is, and maybe it avoids another pass on the data. should check if chaining is done as pipeline or as multiple passes
 
 # For beauty product ratings
 # In [6]: user_item_map.count()
