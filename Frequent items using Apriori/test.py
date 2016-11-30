@@ -5,8 +5,8 @@ from time import time
 import pickle
 
 aggressive_pruning = False
-#input_file = 'test'
-input_file = 'hdfs:/ratings/ratings_Video_Games.csv.gz'
+input_file = 'test'
+#input_file = 'hdfs:/ratings/ratings_Video_Games.csv.gz'
 basename = path.basename(input_file)
 ts = str(int(time()))
 results = []
@@ -94,10 +94,21 @@ results.append('1-set count: {0}'.format(len(previous_set.value)))
 desired_k = 4
 current_k = 2
 while current_k <= desired_k:
-    current_set = transactions.flatMap(lambda x: \
-            generateCandidates(x, current_k, previous_set.value))\
+    candidates = transactions.map(lambda x: \
+        generateCandidates(x, current_k, previous_set.value))
+
+    current_set = candidates.flatMap(lambda x: x)\
         .reduceByKey(lambda x,y: x + y)\
         .filter(lambda x: x[1] >= support)
+
+    # filter to transactions that have candidates
+    old_transactions = transactions
+    transactions = transactions.zip(candidates)\
+        .filter(lambda x: len(x[1]) > 0)\
+        .map(lambda x: x[0])\
+        .cache()
+    old_transactions.unpersist()
+    old_transactions = None
 
     counts.append(current_set.collectAsMap())
     previous_set = sc.broadcast(counts[-1])
