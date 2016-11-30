@@ -155,16 +155,11 @@ while current_k <= desired_k:
 # also think about optimizing pruning. generating dependencies are creating too many tuples
 # explore dataframes api too maybe
 
-replace leftOuterJoin with join?
-duplaicte transaction on all nodes to disk?
 try reducing transactions by count
 also do join on previous set with transacion. and filter out all transactions without atleast one frequent itemset
 also maybe do one more filtering on the transaction value. filter out all items which are not part of any frequent set. but tis is just memory saving in value. might still be useful
 try foreach
-flatMap on count and dontreturn not found tuple
-instead of generating dep, directly cartesian previous with candidates
-    then count if prev set in cand. then reduce by candidates. we should have k-1 for all pruned candidates
-do a join on previous set for cand gen instead of cartesian
+flatMap on count and dont return not found tuple
 change partition to sc.defaultParallelism * 2 or 3
 add check to do pruning only for 3-sets and above
 add check to coninue genrating only if count of prev set > 0
