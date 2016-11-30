@@ -20,14 +20,11 @@ def generateCandidates(basket, k, previous_set):
         for subset in combinations(candidate, k-1):
             if len(subset) == 1:
                 subset = subset[0]
-            else:
-                subset = tuple(sorted(subset))
             if subset not in previous_set:
                 #print '{0} failed because of {1}'.format(candidate, subset)
                 valid = False
                 break
         if valid:
-            candidate = tuple(sorted(candidate))
             candidates.append((candidate, 1))
 
     return candidates
@@ -37,6 +34,7 @@ def doesContain(container, items):
     return all((item in container for item in items))
 
 if input_file == 'test':
+    # TODO: remove this
     test_data = '''1,2,5
     2,4
     2,3
@@ -78,17 +76,18 @@ else:
 
     transactions = user_item_map.map(lambda x: (x[0], [x[1]]))\
         .reduceByKey(lambda x,y: x + y)\
-        .map(lambda x: tuple(x[1]))\
+        .map(lambda x: tuple(sorted(x[1])))\
         .persist(StorageLevel.MEMORY_AND_DISK)
-    transactions.count() # to trigger caching
 
     # 1-set frequent items
     frequent_items = user_item_map.map(lambda x: (x[1], 1))\
         .reduceByKey(lambda x,y: x + y)\
         .filter(lambda x: x[1] >= support)
 
-counts_1set = frequent_items.collectAsMap()
-previous_set = sc.broadcast(set(counts_1set.keys()))
+num_transactions = float(transactions.count()) # trigger caching
+counts = [[]]
+counts.append(frequent_items.collectAsMap())
+previous_set = sc.broadcast(counts[-1])
 
 results.append('1-set count: {0}'.format(len(previous_set.value)))
 
@@ -100,13 +99,25 @@ while current_k <= desired_k:
         .reduceByKey(lambda x,y: x + y)\
         .filter(lambda x: x[1] >= support)
 
-    previous_set = sc.broadcast(set(current_set.keys().collect()))
+    counts.append(current_set.collectAsMap())
+    previous_set = sc.broadcast(counts[-1])
     results.append(
-        '{0}-set count: {1}'.format(current_k, len(previous_set.value)))
+        '{0}-set count: {1}'.format(current_k, len(counts[-1])))
     current_k += 1
 
-counts_4set = current_set.collectAsMap()
-#results.append(current_set.collect())
+rules = []
+for items, count in counts[4].iteritems():
+    count = float(count)
+    for i, item in enumerate(items):
+        left = items[:i] + items[i+1:]
+        confidence = count / counts[3][left]
+        interest = confidence - counts[1][item] / num_transactions
+        if confidence >= 0.05 and interest >= 0.02:
+            rules.append((left, item))
+
+results.append(rules)
 
 pickle.dump(results, \
     open('results' + suffix, "wb"))
+pickle.dump(counts, \
+    open('counts' + suffix, "wb"))
