@@ -4,12 +4,10 @@ from os import path
 from time import time
 import pickle
 
-aggressive_pruning = False
 input_file = 'test'
-#input_file = 'hdfs:/ratings/ratings_Video_Games.csv.gz'
+#input_file = 'hdfs:/ratings/ratings_Video_Games.10k.csv.gz'
 basename = path.basename(input_file)
 ts = str(int(time()))
-results = []
 suffix = '_{0}_{1}'.format(basename, ts)
 sc = SparkContext(appName='Vj_Apriori' + suffix)
 
@@ -32,6 +30,13 @@ def generateCandidates(basket, k, previous_set):
 def doesContain(container, items):
     container = set(container)
     return all((item in container for item in items))
+
+def cleanTransaction(transaction, alphabets):
+    cleaned_transaction = []
+    for item in transaction:
+        if item in alphabets:
+            cleaned_transaction.append(item)
+    return tuple(cleaned_transaction)
 
 if input_file == 'test':
     # TODO: remove this
@@ -88,32 +93,49 @@ num_transactions = float(transactions.count()) # trigger caching
 counts = [[]]
 counts.append(frequent_items.collectAsMap())
 previous_set = sc.broadcast(counts[-1])
-
+results = []
 results.append('1-set count: {0}'.format(len(previous_set.value)))
 
 desired_k = 4
 current_k = 2
 while current_k <= desired_k:
     candidates = transactions.map(lambda x: \
-        generateCandidates(x, current_k, previous_set.value))
+        generateCandidates(x, current_k, previous_set.value))\
+        .persist(StorageLevel.MEMORY_AND_DISK)
 
     current_set = candidates.flatMap(lambda x: x)\
         .reduceByKey(lambda x,y: x + y)\
         .filter(lambda x: x[1] >= support)
 
+    counts.append(current_set.collectAsMap())
+    results.append(
+    '{0}-set count: {1}'.format(current_k, len(counts[-1])))
+
+    # dont do filtering if this is the last iteration
+    if current_k == desired_k:
+        break
+
+    #previous_set.destroy()
+    previous_set = sc.broadcast(counts[-1])
+
+    # build alphabet space of still considered items 
+    # and remove rest from transactions
+    alphabets = set()
+    for items in previous_set.value:
+        alphabets.update(items)
+    alphabets = sc.broadcast(alphabets)
+
     # filter to transactions that have candidates
     old_transactions = transactions
     transactions = transactions.zip(candidates)\
         .filter(lambda x: len(x[1]) > 0)\
-        .map(lambda x: x[0])\
+        .map(lambda x: cleanTransaction(x[0], alphabets.value))\
+        .repartition(200)\
         .cache()
-    old_transactions.unpersist()
+    #old_transactions.unpersist()
+    #candidates.unpersist()
     old_transactions = None
-
-    counts.append(current_set.collectAsMap())
-    previous_set = sc.broadcast(counts[-1])
-    results.append(
-        '{0}-set count: {1}'.format(current_k, len(counts[-1])))
+    #alphabets.destroy()
     current_k += 1
 
 rules = []
