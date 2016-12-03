@@ -21,6 +21,12 @@ def extractAsTuple(line):
     user, item, rating, t = [x.strip() for x in line.split(',')]
     return ((item, user), (float(rating), int(t)))
 
+def reduceDistinct(x, y):
+    distinct = False
+    if x[0] == y[0]:
+        distinct = x[0]
+    return (distinct, x[1] + y[1])
+
 def computeScore(tup, norms, interested_norm):
     item, (dot, _) = tup
     norm = norms[item]
@@ -40,7 +46,7 @@ def computeProductIntersection(tup, interested_row):
     return [(item, (product, 1))]
 
 
-rdd = sc.textFile(input_file, use_unicode=False)
+rdd = sc.textFile(input_file, minPartitions=8, use_unicode=False)
 item_user_map = rdd.map(extractAsTuple)\
     .reduceByKey(lambda r1,r2: r1 if r1[1] > r2[1] else r2)\
     .map(lambda x: ((x[0][0]), (x[0][1], x[1][0])))
@@ -51,20 +57,12 @@ items_to_remove = item_user_map.map(lambda x: (x[0], 1))\
 item_user_map = item_user_map.subtractByKey(items_to_remove)
 
 user_item_map = item_user_map.map(lambda x: ((x[1][0]), (x[0], x[1][1])))
-users_to_remove = user_item_map.map(lambda x: (x[0], 1))\
-    .reduceByKey(lambda x,y: x + y)\
-    .filter(lambda x: x[1] < 10)
+users_to_remove = user_item_map.map(lambda x: (x[0], (x[1][1], 1)))\
+    .reduceByKey(reduceDistinct)\
+    .filter(lambda x: x[1][1] < 10 or x[1][0] != False)
 user_item_map = user_item_map.subtractByKey(users_to_remove)
 
-users = user_item_map.keys().distinct().collect()
-
 item_user_map = user_item_map.map(lambda x: ((x[1][0]), (x[0], x[1][1])))
-
-# 105370 number of tuple in item_user_map at this stage
-
-# TODO: see if we can force a paritioning by item id/key to optimize next ops
-
-items = item_user_map.keys().distinct().collect()
 
 means = item_user_map.map(lambda x: (x[0], (x[1][1], 1.0)))\
     .reduceByKey(lambda x,y: ((x[0] + y[0]), (x[1] + y[1])))\
@@ -74,14 +72,15 @@ means = item_user_map.map(lambda x: (x[0], (x[1][1], 1.0)))\
 item_user_map = item_user_map.join(means)\
     .map(lambda x: (x[0], (x[1][0][0], x[1][0][1] - x[1][1])))
 
-# TODO: filter out users/items with zero variance
-# Maybe can reduce by key and take an or operation
+means = means.collectAsMap()
+interested_mean = means[interested_item]
+
+# Need to filter out users/items with zero variance i.e zero rows
+# But is not really necessary for now since they anyway would be 0 cosine
 
 norms = item_user_map.map(lambda x: (x[0], x[1][1] ** 2))\
     .reduceByKey(lambda x,y: x + y)\
     .map(lambda x: (x[0], x[1] ** 0.5))
-no_variance_items = norms.filter(lambda x: x[1] == 0)
-    .keys()
 norms = sc.broadcast(norms.collectAsMap())
 
 # maybe throw rows with 0 norms. they are zero variance. or rows with < some small epsilon
@@ -102,44 +101,46 @@ scores = item_user_map.flatMap(\
     .map(lambda x: computeScore(x, norms.value, interested_norm))\
     .filter(lambda x: x[1] > 0)\
 
-
+scores = scores.collectAsMap()
 # With a target row, skip columns that do not have at least 2 neighbors
 
 # can we throw our users also with no var? would it not make a diff?
 
 # computer interested users rdd
+user_item_map = item_user_map.map(lambda x: ((x[1][0]), (x[0], x[1][1])))
+users = user_item_map.keys().distinct().collect()
+results = []
+full_row = []
 for user in users:
-    if user in interested_row:
+    if user in interested_row.value:
         continue
     # we need to fill the missing val for this user
     # find all rating of this user
-    # can do a lookup on user-item
-    # find the top 50 of these items based on their score
+    predicted_score = 0
+    item_ratings = user_item_map.lookup(user)
+    neighbour_ratings = []
+    for item, r in item_ratings:
+        if item in scores:
+            neighbour_ratings.append((scores[item], r))
+    if len(neighbour_ratings) < 2:
+        continue
+    # find the top 50 of these items based on their sim score
     # compute a weighted avg
-    # can we parallelize this
-    # maybe create a users rdd. do subtractbykey of interested row rdd
-    # join these interested users rdd with user-item rdd
+    neighbour_ratings.sort(reverse=True)
+    predicted_score = sum(rating * sim for (sim, rating) in neighbour_ratings[:50])
+    predicted_score /= sum(sim for (sim, _) in neighbour_ratings[:50])
+    predicted_score += interested_mean
+    print user, predicted_score
+    results.append((user, predicted_score))
+
+full_row = [interested_row.value.items() + results]
 
 
-
-
-    .top(50, key=lambda x: x[1])
-
-
-
-
-is cogroup same as doing a groupByKey and then joining on those?
-
-results.append(rules)
-
+pickle.dump(scores.collect(), \
+    open('scores' + suffix, "wb"))
 pickle.dump(results, \
     open('results' + suffix, "wb"))
-pickle.dump(counts, \
-    open('counts' + suffix, "wb"))
 
 with open('output' + suffix, "wb") as f:
-    for line in results[-1]:
-        f.write("%s\n" % line)
-    for rule in rules:
-        rule = rule[0] + ' --> ' + rule[1]
-        f.write("%s\n" % rule)
+    for tup in full_row:
+        f.write("%s\n" % str(tup))
