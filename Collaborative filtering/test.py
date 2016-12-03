@@ -5,29 +5,31 @@ from time import time
 import pickle
 
 # input_file = 'test'
+input_file = 'Downloads/Data/ratings_Video_Games.10k.csv.gz'
 # #input_file = 'hdfs:/ratings/ratings_Video_Games.10k.csv.gz'
 input_file = 'hdfs:/ratings/ratings_Video_Games.csv.gz'
 # input_file = 'hdfs:/ratings/ratings_Electronics.csv.gz'
 # input_file = 'hdfs:/ratings/ratings_Beauty.csv.gz'
 # input_file = 'hdfs:/ratings/ratings_Health_and_Personal_Care.csv.gz'
+interested_item = 'B000035Y4P'
 basename = path.basename(input_file)
 ts = str(int(time()))
 suffix = '_{0}_{1}'.format(basename, ts)
-sc = SparkContext(appName='Vj_Apriori' + suffix)
+sc = SparkContext(appName='Vj_CF' + suffix)
 
 def extractAsTuple(line):
     user, item, rating, t = [x.strip() for x in line.split(',')]
     return ((item, user), (float(rating), int(t)))
 
-def getLaterRating(r1, r2):
-    # print r1, r2
-    if r1[1] > r2[1]:
-        return r1
-    return r2
+def computeScore(x, norms, interested_norm):
+    norm = norms[x[0]]
+    if not norm:
+        return (x[0], 0)
+    return (x[0], x[1]/(norm * interested_norm))
 
 rdd = sc.textFile(input_file, use_unicode=False)
 item_user_map = rdd.map(extractAsTuple)\
-    .reduceByKey(lambda x,y: getLaterRating(x, y))\
+    .reduceByKey(lambda r1,r2: r1 if r1[1] > r2[1] else r2)\
     .map(lambda x: ((x[0][0]), (x[0][1], x[1][0])))
 
 items_to_remove = item_user_map.map(lambda x: (x[0], 1))\
@@ -47,7 +49,7 @@ item_user_map = user_item_map.map(lambda x: ((x[1][0]), (x[0], x[1][1])))
 
 # 105370 number of tuple in item_user_map at this stage
 
-see if we can force a paritioning by item id/key to optimize next ops
+# TODO: see if we can force a paritioning by item id/key to optimize next ops
 
 items = item_user_map.keys().collect()
 
@@ -62,9 +64,41 @@ item_user_map = item_user_map.join(means)\
 norms = item_user_map.map(lambda x: (x[0], x[1][1] ** 2))\
     .reduceByKey(lambda x,y: x + y)\
     .map(lambda x: (x[0], x[1] ** 0.5))
+norms = sc.broadcast(norms.collectAsMap())
+
+interested_row = item_user_map.lookup(interested_item)
+interested_row = {u:r for (u, r) in interested_row}
+interested_row = sc.broadcast(interested_row)
+
+interested_norm = norms.value[interested_item]
+
+# compute cosine scores with all items
+scores = item_user_map.map(\
+    lambda x: (x[0], x[1][1] * interested_row.value.get(x[1][0], 0)))\
+    .reduceByKey(lambda x,y: x + y)\
+    .map(lambda x: computeScore(x, norms.value, interested_norm))\
+
+
+# verify self cosine score is 1
+
+for user in users:
+    if user in interested_row:
+        continue
+    # we need to fill the missing val for this user
+    # find all rating of this user
+    # can do a lookup on user-item
+    # find the top 50 of these items based on their score
+    # compute a weighted avg
+    # can we parallelize this
+    # maybe create a users rdd. do subtractbykey of interested row rdd
+    # join these interested users rdd with user-item rdd
 
 
 
+
+    .top(50, key=lambda x: x[1])
+
+check division by error
 
 get the rdd for the item that we are interested in
 maybe bcast this item row to everyone
