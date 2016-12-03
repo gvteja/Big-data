@@ -4,8 +4,12 @@ from os import path
 from time import time
 import pickle
 
-input_file = 'test'
-#input_file = 'hdfs:/ratings/ratings_Video_Games.10k.csv.gz'
+# input_file = 'test'
+# input_file = 'hdfs:/ratings/ratings_Video_Games.10k.csv.gz'
+input_file = 'hdfs:/ratings/ratings_Video_Games.csv.gz'
+# input_file = 'hdfs:/ratings/ratings_Electronics.csv.gz'
+# input_file = 'hdfs:/ratings/ratings_Beauty.csv.gz'
+# input_file = 'hdfs:/ratings/ratings_Health_and_Personal_Care.csv.gz'
 basename = path.basename(input_file)
 ts = str(int(time()))
 suffix = '_{0}_{1}'.format(basename, ts)
@@ -146,7 +150,7 @@ for items, count in counts[4].iteritems():
         confidence = count / counts[3][left]
         interest = confidence - counts[1][item] / num_transactions
         if confidence >= 0.05 and interest >= 0.02:
-            rules.append((left, item))
+            rules.append((left, item, confidence, interest))
 
 results.append(rules)
 
@@ -154,3 +158,10 @@ pickle.dump(results, \
     open('results' + suffix, "wb"))
 pickle.dump(counts, \
     open('counts' + suffix, "wb"))
+
+with open('output' + suffix, "wb") as f:
+    for line in results[:-1]:
+        f.write("%s\n" % line)
+    for rule in results[-1]:
+        rule = str(rule[0]) + ' --> ' + rule[1]
+        f.write("%s\n" % rule)
