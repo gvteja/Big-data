@@ -9,8 +9,6 @@ input_file = 'Downloads/Data/ratings_Video_Games.csv.gz'
 # #input_file = 'hdfs:/ratings/ratings_Video_Games.10k.csv.gz'
 input_file = 'hdfs:/ratings/ratings_Video_Games.csv.gz'
 # input_file = 'hdfs:/ratings/ratings_Electronics.csv.gz'
-# input_file = 'hdfs:/ratings/ratings_Beauty.csv.gz'
-# input_file = 'hdfs:/ratings/ratings_Health_and_Personal_Care.csv.gz'
 interested_item = 'B000035Y4P'
 basename = path.basename(input_file)
 ts = str(int(time()))
@@ -45,6 +43,21 @@ def computeProductIntersection(tup, interested_row):
         return []
     return [(item, (product, 1))]
 
+def predictScore(tup, scores):
+    user, item_ratings = tup
+    neighbour_ratings = []
+    for item, r in item_ratings:
+        if item in scores:
+            neighbour_ratings.append((scores[item], r))
+    if len(neighbour_ratings) < 2:
+        return []
+    # find the top 50 of these items based on their sim score and
+    # compute a weighted avg
+    neighbour_ratings.sort(reverse=True)
+    predicted_score = sum(rating * sim for (sim, rating) in neighbour_ratings[:50])
+    predicted_score /= sum(sim for (sim, _) in neighbour_ratings[:50])
+    predicted_score += interested_mean
+    return [(user, predicted_score)]
 
 rdd = sc.textFile(input_file, minPartitions=8, use_unicode=False)
 item_user_map = rdd.map(extractAsTuple)\
@@ -91,7 +104,7 @@ interested_row = sc.broadcast(interested_row)
 
 interested_norm = norms.value[interested_item]
 
-# compute cosine scores for and get all valid neighbours
+# compute cosine similarity scores for and get all valid neighbours
 # valid implies having >= 2 users in common 
 # and having cosine sim > 0
 scores = item_user_map.flatMap(\
@@ -104,43 +117,26 @@ scores = item_user_map.flatMap(\
 scores = scores.collectAsMap()
 # With a target row, skip columns that do not have at least 2 neighbors
 
-# can we throw our users also with no var? would it not make a diff?
+# compute interested users rdd
+rated_users = sc.parallelize([(interested_item, None)])\
+    .join(item_user_map)\
+    .map(lambda x: (x[1][1][0], None))
 
-# computer interested users rdd
 user_item_map = item_user_map.map(lambda x: ((x[1][0]), (x[0], x[1][1])))
-users = user_item_map.keys().distinct().collect()
-results = []
-full_row = []
-for user in users:
-    if user in interested_row.value:
-        continue
-    # we need to fill the missing val for this user
-    # find all rating of this user
-    predicted_score = 0
-    item_ratings = user_item_map.lookup(user)
-    neighbour_ratings = []
-    for item, r in item_ratings:
-        if item in scores:
-            neighbour_ratings.append((scores[item], r))
-    if len(neighbour_ratings) < 2:
-        continue
-    # find the top 50 of these items based on their sim score
-    # compute a weighted avg
-    neighbour_ratings.sort(reverse=True)
-    predicted_score = sum(rating * sim for (sim, rating) in neighbour_ratings[:50])
-    predicted_score /= sum(sim for (sim, _) in neighbour_ratings[:50])
-    predicted_score += interested_mean
-    print user, predicted_score
-    results.append((user, predicted_score))
+interested_user_ratings = user_item_map.subtractByKey(rated_users)
+predictions = interested_user_ratings.groupByKey()\
+    .flatMap(lambda x: predictScore(x, scores))\
+    .collect()
 
-full_row = [interested_row.value.items() + results]
+full_row = [(i, r + interested_mean) for i, r in interested_row.value.items()]
+full_row = full_row + predictions
 
 
-pickle.dump(scores.collect(), \
+pickle.dump(scores, \
     open('scores' + suffix, "wb"))
-pickle.dump(results, \
-    open('results' + suffix, "wb"))
+pickle.dump(predictions, \
+    open('predictions' + suffix, "wb"))
 
 with open('output' + suffix, "wb") as f:
-    for tup in full_row:
-        f.write("%s\n" % str(tup))
+    for item, rating in full_row:
+        f.write("{0} - {1}\n".format(item, rating))
