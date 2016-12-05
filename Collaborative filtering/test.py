@@ -4,12 +4,8 @@ from os import path
 from time import time
 import pickle
 
-# input_file = 'test'
-input_file = 'Downloads/Data/ratings_Video_Games.csv.gz'
-# #input_file = 'hdfs:/ratings/ratings_Video_Games.10k.csv.gz'
-input_file = 'hdfs:/ratings/ratings_Video_Games.csv.gz'
-# input_file = 'hdfs:/ratings/ratings_Electronics.csv.gz'
-interested_item = 'B000035Y4P'
+input_file = 'hdfs:/ratings/ratings_Electronics.csv.gz'
+interested_item = '1400599997'
 basename = path.basename(input_file)
 ts = str(int(time()))
 suffix = '_{0}_{1}'.format(basename, ts)
@@ -18,12 +14,6 @@ sc = SparkContext(appName='Vj_CF' + suffix)
 def extractAsTuple(line):
     user, item, rating, t = [x.strip() for x in line.split(',')]
     return ((item, user), (float(rating), int(t)))
-
-def reduceDistinct(x, y):
-    distinct = False
-    if x[0] == y[0]:
-        distinct = x[0]
-    return (distinct, x[1] + y[1])
 
 def computeScore(tup, norms, interested_norm):
     item, (dot, _) = tup
@@ -71,8 +61,8 @@ item_user_map = item_user_map.subtractByKey(items_to_remove)
 
 user_item_map = item_user_map.map(lambda x: ((x[1][0]), (x[0], x[1][1])))
 users_to_remove = user_item_map.map(lambda x: (x[0], (x[1][1], 1)))\
-    .reduceByKey(reduceDistinct)\
-    .filter(lambda x: x[1][1] < 10 or x[1][0] != False)
+    .reduceByKey(lambda x,y: x + y)\
+    .filter(lambda x: x[1] < 10)
 user_item_map = user_item_map.subtractByKey(users_to_remove)
 
 item_user_map = user_item_map.map(lambda x: ((x[1][0]), (x[0], x[1][1])))
@@ -112,7 +102,7 @@ scores = item_user_map.flatMap(\
     .reduceByKey(lambda x,y: ((x[0] + y[0]), (x[1] + y[1])))\
     .filter(lambda x: x[1][1] >= 2)\
     .map(lambda x: computeScore(x, norms.value, interested_norm))\
-    .filter(lambda x: x[1] > 0)\
+    .filter(lambda x: x[1] > 0)
 
 scores = scores.collectAsMap()
 # With a target row, skip columns that do not have at least 2 neighbors
@@ -136,6 +126,8 @@ pickle.dump(scores, \
     open('scores' + suffix, "wb"))
 pickle.dump(predictions, \
     open('predictions' + suffix, "wb"))
+pickle.dump(full_row, \
+    open('row' + suffix, "wb"))
 
 with open('output' + suffix, "wb") as f:
     for item, rating in full_row:
